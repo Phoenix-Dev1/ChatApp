@@ -22,54 +22,76 @@ const Input = () => {
   const { currentUser } = useContext(AuthContext);
   const { data } = useContext(ChatContext);
 
-  const handleSend = async () => {
-    setUploading(true);
+  const handleKeyDown = (event) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      handleSend();
+    }
+  };
 
-    try {
-      if (img) {
+  const handleImgUpload = async () => {
+    if (img) {
+      try {
+        setUploading(true);
+
         const storageRef = ref(storage, uuid());
         const uploadTask = uploadBytesResumable(storageRef, img);
 
-        uploadTask.on(
-          (error) => {
-            console.error('Error during upload:', error);
-            // Handle the upload error here
-            setUploading(false); // Set it to false here as well
-          },
-          () => {
-            getDownloadURL(uploadTask.snapshot.ref)
-              .then(async (downloadURL) => {
-                await updateDoc(doc(db, 'chats', data.chatId), {
-                  messages: arrayUnion({
-                    id: uuid(),
-                    text,
-                    senderId: currentUser.uid,
-                    date: Timestamp.now(),
-                    img: downloadURL,
-                  }),
-                });
-                // Handle the successful upload here if needed
-                setUploading(false); // Set it to false here as well
-              })
-              .catch((error) => {
-                console.error('Error getting download URL:', error);
-                // Handle the download URL error here
-                setUploading(false);
-              });
-          }
-        );
-      } else {
+        const uploadSnapshot = await uploadTask;
+        const downloadURL = await getDownloadURL(uploadSnapshot.ref);
+
         await updateDoc(doc(db, 'chats', data.chatId), {
           messages: arrayUnion({
             id: uuid(),
             text,
             senderId: currentUser.uid,
             date: Timestamp.now(),
+            img: downloadURL,
           }),
         });
-        // Set it to false when there's no image
+
+        await updateDoc(doc(db, 'userChats', currentUser.uid), {
+          [data.chatId + '.lastMessage']: {
+            text,
+          },
+          [data.chatId + '.date']: serverTimestamp(),
+        });
+
+        await updateDoc(doc(db, 'userChats', data.user.uid), {
+          [data.chatId + '.lastMessage']: {
+            text,
+          },
+          [data.chatId + '.date']: serverTimestamp(),
+        });
+
+        setText('');
+        setImg(null);
+      } catch (error) {
+        console.error('An error occurred:', error);
+      } finally {
         setUploading(false);
       }
+    }
+  };
+
+  const handleSend = async () => {
+    try {
+      setUploading(true);
+
+      if (img) {
+        // Call the image upload function
+        handleImgUpload();
+        return;
+      }
+
+      await updateDoc(doc(db, 'chats', data.chatId), {
+        messages: arrayUnion({
+          id: uuid(),
+          text,
+          senderId: currentUser.uid,
+          date: Timestamp.now(),
+        }),
+      });
 
       await updateDoc(doc(db, 'userChats', currentUser.uid), {
         [data.chatId + '.lastMessage']: {
@@ -89,7 +111,7 @@ const Input = () => {
       setImg(null);
     } catch (error) {
       console.error('An error occurred:', error);
-      // Handle other errors here if needed
+    } finally {
       setUploading(false);
     }
   };
@@ -100,6 +122,7 @@ const Input = () => {
         type="text"
         placeholder="Type something..."
         onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
         value={text}
       />
       <div className="send">
